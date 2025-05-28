@@ -6,6 +6,7 @@ mod scan;
 mod streaming;
 mod udtf;
 mod utils;
+mod qc;
 
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
@@ -13,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use datafusion::arrow::ffi_stream::ArrowArrayStreamReader;
 use datafusion::arrow::pyarrow::PyArrowType;
 use datafusion::datasource::MemTable;
+use datafusion::execution::context::SessionContext;   // teraz faktycznie używana
 use datafusion_python::dataframe::PyDataFrame;
 use datafusion_vcf::storage::VcfReader;
 use log::{debug, error, info};
@@ -22,6 +24,7 @@ use polars_python::lazyframe::PyLazyFrame;
 use pyo3::prelude::*;
 use tokio::runtime::Runtime;
 
+use crate::qc::gc_content::register as register_gc_content_udf_core;
 use crate::context::PyBioSessionContext;
 use crate::operation::do_range_operation;
 use crate::option::{
@@ -34,6 +37,16 @@ use crate::utils::convert_arrow_rb_schema_to_polars_df_schema;
 const LEFT_TABLE: &str = "s1";
 const RIGHT_TABLE: &str = "s2";
 const DEFAULT_COLUMN_NAMES: [&str; 3] = ["contig", "start", "end"];
+
+
+#[pyfunction]
+#[pyo3(signature = (py_ctx))]
+fn register_gc_content_udf(py_ctx: &PyBioSessionContext) -> PyResult<()> {
+    // ExonSession → posiada pole `session: SessionContext`
+    let session_ctx: &SessionContext = &py_ctx.ctx.session;
+    register_gc_content_udf_core(session_ctx);
+    Ok(())
+}
 
 #[pyfunction]
 #[pyo3(signature = (py_ctx, df1, df2, range_options, limit=None))]
@@ -417,6 +430,7 @@ fn polars_bio(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_describe_vcf, m)?)?;
     m.add_function(wrap_pyfunction!(py_register_view, m)?)?;
     m.add_function(wrap_pyfunction!(py_from_polars, m)?)?;
+    m.add_function(wrap_pyfunction!(register_gc_content_udf, m)?)?;
     // m.add_function(wrap_pyfunction!(unary_operation_scan, m)?)?;
     m.add_class::<PyBioSessionContext>()?;
     m.add_class::<FilterOp>()?;

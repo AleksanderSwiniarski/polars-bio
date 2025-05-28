@@ -1,5 +1,7 @@
 from polars_bio.polars_bio import InputFormat, ReadOptions, VcfReadOptions
 
+from . import gc_content
+
 from .context import ctx, set_option
 from .io import (
     describe_vcf,
@@ -16,6 +18,7 @@ from .io import (
 from .polars_ext import PolarsRangesOperations as LazyFrame
 from .range_op import FilterOp, count_overlaps, coverage, merge, nearest, overlap
 from .range_viz import visualize_intervals
+from .gc_content import plot_gc_content
 
 POLARS_BIO_MAX_THREADS = "datafusion.execution.target_partitions"
 
@@ -42,6 +45,8 @@ __all__ = [
     "sql",
     "InputFormat",
     "LazyFrame",
+    "gc_content",
+    "plot_gc_content",
     "ReadOptions",
     "VcfReadOptions",
     "set_option",
