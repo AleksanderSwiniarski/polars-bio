@@ -7,11 +7,8 @@ use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::SessionContext;
 use datafusion::logical_expr::{create_udf, ColumnarValue, Volatility};
 
-/// Rejestruje UDF `gc_percent(seq)` w podanym SessionContext
 pub fn register(ctx: &SessionContext) {
-    // ----- funkcja bazowa -----
     let func = |args: &[ColumnarValue]| -> Result<ColumnarValue> {
-        // oczekujemy pojedynczej kolumny typu Utf8
         let seqs = match &args[0] {
             ColumnarValue::Array(arr) => arr
                 .as_any()
@@ -44,7 +41,6 @@ pub fn register(ctx: &SessionContext) {
         Ok(ColumnarValue::Array(Arc::new(builder.finish()) as ArrayRef))
     };
 
-    // ----- rejestracja -----
     let udf = create_udf(
         "gc_percent",
         vec![DataType::Utf8],

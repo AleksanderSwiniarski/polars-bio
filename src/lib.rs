@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use datafusion::arrow::ffi_stream::ArrowArrayStreamReader;
 use datafusion::arrow::pyarrow::PyArrowType;
 use datafusion::datasource::MemTable;
-use datafusion::execution::context::SessionContext;   // teraz faktycznie używana
+use datafusion::execution::context::SessionContext;
 use datafusion_python::dataframe::PyDataFrame;
 use datafusion_vcf::storage::VcfReader;
 use log::{debug, error, info};
@@ -42,7 +42,6 @@ const DEFAULT_COLUMN_NAMES: [&str; 3] = ["contig", "start", "end"];
 #[pyfunction]
 #[pyo3(signature = (py_ctx))]
 fn register_gc_content_udf(py_ctx: &PyBioSessionContext) -> PyResult<()> {
-    // ExonSession → posiada pole `session: SessionContext`
     let session_ctx: &SessionContext = &py_ctx.ctx.session;
     register_gc_content_udf_core(session_ctx);
     Ok(())

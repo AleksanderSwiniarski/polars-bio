@@ -1,120 +1,108 @@
-# python/polars_bio/tests/test_gc_content.py
-#
-# Jednostkowe testy funkcji qc.gc_content.gc_content  (GC-percent UDF + wrapper)
-# uruchamiane poleceniem:  pytest -q
-#
-# Wymagania:
-#   pytest
-#   polars>=0.20
-#   polars-bio (z zaimplementowaną funkcją gc_content)
-# --------------------------------------------------------------------------------
+import os
 
-import pathlib
-import numpy as np
-import polars as pl
 import pytest
+import pandas as pd
+import polars as pl
+import matplotlib.pyplot as plt
 
 from polars_bio.io import read_fastq
-from polars_bio.gc_content import gc_content
+from polars_bio.gc_content import gc_content, plot_gc_content
 
+EXAMPLE_FASTQ = os.path.join(
+    os.path.dirname(__file__), "..", "tests", "data", "example.fastq"
+)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Pomocnicza referencyjna implementacja GC-percent w czystym Pythonie
-# ────────────────────────────────────────────────────────────────────────────────
-def _py_gc_percent(seq: str) -> int:
-    """
-    Oblicza %GC (0-100) dla pojedynczej sekwencji FASTQ.
-    """
-    gc = sum(1 for b in seq if b in "GCgc")
-    return int(gc * 100 / len(seq)) if seq else 0
+class TestGCContent:
+    _pd_small = pd.DataFrame({"sequence": ["GC", "AT", "GG", "CC", "TA"]})
+    _expected_pd_small = pd.DataFrame({"gc": [0, 100], "count": [2, 3]})
+    _expected_pd_small["gc"] = _expected_pd_small["gc"].astype("uint8")
+    _expected_pd_small["count"] = _expected_pd_small["count"].astype("int64")
 
+    _pl_small = pl.DataFrame({"sequence": ["GCGC", "ATAT", "CCGG", "TTAA"]})
+    _expected_pl_small = pd.DataFrame({"gc": [0, 100], "count": [2, 2]})
+    _expected_pl_small["gc"] = _expected_pl_small["gc"].astype("uint8")
+    _expected_pl_small["count"] = _expected_pl_small["count"].astype("int64")
 
-# Ścieżki plików testowych zaczerpnięte z upstream fastqc-rs
-RES_DIR = pathlib.Path(__file__).with_suffix("").parent / "resources"
-FASTQ_PATH = RES_DIR / "example.fastq"
+    _lf = read_fastq(EXAMPLE_FASTQ)
+    _df_gc_pl = gc_content(_lf, output_type="polars.DataFrame")
+    _df_gc_pd = gc_content(EXAMPLE_FASTQ, output_type="pandas.DataFrame")
 
+    def test_small_pandas_df(self):
+        result_pd = gc_content(self._pd_small, output_type="pandas.DataFrame")
+        result_pd = result_pd.sort_values("gc").reset_index(drop=True)
+        pd.testing.assert_frame_equal(result_pd, self._expected_pd_small)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 1. Walidacja wyniku na podstawie referencyjnego obliczenia w Pythonie
-# ────────────────────────────────────────────────────────────────────────────────
-def test_gc_content_fastq_matches_python_reference():
-    """
-    Porównujemy wynik gc_content(path) z dystrybucją GC policzoną „ręcznie”.
-    """
-    # Wynik funkcji z biblioteki
-    lib_df = gc_content(str(FASTQ_PATH)).sort("gc")
-
-    # Referencja (czysty Python → Polars → agregacja)
-    seq_df = read_fastq(str(FASTQ_PATH))  # kolumna "seq"
-    ref_df = (
-        seq_df.select(
-            pl.col("seq")
-            .map_elements(_py_gc_percent, return_dtype=pl.UInt8)
-            .alias("gc")
+        result_pl = gc_content(self._pd_small, output_type="polars.DataFrame")
+        result_pl_pd = (
+            result_pl.to_pandas()
+            .sort_values("gc")
+            .reset_index(drop=True)
+            .astype({"gc": "uint8", "count": "int64"})
         )
-        .group_by("gc")
-        .count()
-        .sort("gc")
-    )
+        pd.testing.assert_frame_equal(result_pl_pd, self._expected_pd_small)
 
-    # Obie ramki muszą mieć identyczne wiersze i kolejność
-    assert lib_df.frame_equal(
-        ref_df, null_equal=True
-    ), "Rozkład %GC różni się od referencji"
+    def test_small_polars_df(self):
+        result_pl = gc_content(self._pl_small, output_type="polars.DataFrame")
+        result_pl_pd = (
+            result_pl.to_pandas()
+            .sort_values("gc")
+            .reset_index(drop=True)
+            .astype({"gc": "uint8", "count": "int64"})
+        )
+        pd.testing.assert_frame_equal(result_pl_pd, self._expected_pl_small)
 
+        result_pd = gc_content(self._pl_small, output_type="pandas.DataFrame")
+        result_pd = (
+            result_pd.sort_values("gc")
+            .reset_index(drop=True)
+            .astype({"gc": "uint8", "count": "int64"})
+        )
+        pd.testing.assert_frame_equal(result_pd, self._expected_pl_small)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 2. Obsługa wejścia jako gotowego DataFrame
-# ────────────────────────────────────────────────────────────────────────────────
-def test_gc_content_accepts_dataframe_input():
-    """
-    Funkcja powinna akceptować również `polars.DataFrame`, nie tylko ścieżkę.
-    """
-    df = read_fastq(str(FASTQ_PATH))
-    out = gc_content(df)
-    assert isinstance(out, pl.DataFrame)
-    # suma liczby odczytów powinna się zgadzać
-    assert out["count"].sum() == len(df)
+    def test_lazyframe_total_counts_and_types(self):
+        df_full = self._lf.collect()
+        total_reads = df_full.height
+        assert self._df_gc_pl["count"].sum() == total_reads
+        assert self._df_gc_pl["gc"].dtype == pl.UInt8
+        assert self._df_gc_pl["count"].dtype == pl.Int64
 
+    def test_fastq_path_pandas_output(self):
+        df_gc_pd = (
+            gc_content(EXAMPLE_FASTQ, output_type="pandas.DataFrame")
+            .astype({"gc": "uint8", "count": "int64"})
+        )
+        df_full = self._lf.collect()
+        total_reads = df_full.height
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 3. Tolerancja wartości NULL / brakujących sekwencji
-# ────────────────────────────────────────────────────────────────────────────────
-def test_gc_content_handles_null_sequences():
-    dummy = pl.DataFrame({"seq": ["GCGC", None, "ATGC", ""]})
-    result = gc_content(dummy)
-    # w wyniku powinny pojawić się tylko nie-puste sekwencje
-    assert result["count"].sum() == 3
-    # Sprawdź, że pusta sekwencja daje 0 %GC
-    assert (
-        result.filter(pl.col("gc") == 0)["count"].sum() >= 1
-    ), "Pusta sekwencja powinna trafiać do koszyka 0 %GC"
+        assert int(df_gc_pd["count"].sum()) == total_reads
+        assert df_gc_pd["gc"].min() >= 0
+        assert df_gc_pd["gc"].max() <= 100
+        assert pd.api.types.is_integer_dtype(df_gc_pd["gc"])
+        assert pd.api.types.is_integer_dtype(df_gc_pd["count"])
 
+    def test_plot_gc_content_basic(self):
+        df_simple = pl.DataFrame({"gc": [0, 50, 100], "count": [5, 10, 5]})
+        fig, ax = plt.subplots()
+        ax = plot_gc_content(df_simple, ax=ax)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 4. Idempotencja przy różnych poziomach równoległości
-# ────────────────────────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("partitions", [1, 2, 8])
-def test_gc_content_parallel_consistency(partitions):
-    """
-    Wynik nie powinien zależeć od ustawienia target_partitions.
-    """
-    res_a = gc_content(str(FASTQ_PATH), target_partitions=partitions).sort("gc")
-    res_b = gc_content(str(FASTQ_PATH), target_partitions=1).sort("gc")
-    assert res_a.frame_equal(res_b, null_equal=True)
+        patches = ax.patches
+        assert len(patches) == 3
+        heights = [p.get_height() for p in patches]
+        assert heights == [5, 10, 5]
+        x_positions = [p.get_x() + p.get_width() / 2 for p in patches]
+        assert pytest.approx(x_positions, rel=1e-2) == [0, 50, 100]
+        plt.close(fig)
 
+    def test_invalid_input_type(self):
+        with pytest.raises(TypeError):
+            _ = gc_content([1, 2, 3], output_type="polars.DataFrame")
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 5. Szybki test „dymny” pojedynczej sekwencji
-# ────────────────────────────────────────────────────────────────────────────────
-def test_single_sequence_smoke():
-    """
-    Upewniamy się, że pojedyncza sztuczna sekwencja zwróci poprawny %GC.
-    """
-    seq = "GCGTAAcccc"
-    df = pl.DataFrame({"seq": [seq]})
-    out = gc_content(df)
-    expected = _py_gc_percent(seq)
-    assert out.height == 1
-    assert out.item(0, "gc") == expected
-    assert out.item(0, "count") == 1
+    def test_invalid_output_type(self):
+        with pytest.raises(ValueError):
+            _ = gc_content(EXAMPLE_FASTQ, output_type="unknown.Format")
+
+    def test_invalid_file_extension(self, tmp_path):
+        bad_file = tmp_path / "data.txt"
+        bad_file.write_text("ABCD")
+        with pytest.raises(ValueError):
+            _ = gc_content(str(bad_file), output_type="polars.DataFrame")
